@@ -91,7 +91,7 @@ afl_results_weather <- afl_results %>%
 
 afl_results_weather <- afl_results_weather %>%
   mutate(
-    round = as.numeric(str_sub(round, -2, -1))  # Extract last two characters and convert to numeric
+    round = as.numeric(str_sub(round, -2, -1))  
   ) %>%
   select(
     season, date, round, match_id, home_team, home_goals, home_behinds, home_score, 
@@ -190,6 +190,18 @@ match_score <- ggplot(afl_results_weather, aes(x = factor(is_wet), y = home_scor
   theme_minimal()
 match_score
 
+
+afl_long <- afl_results_weather %>%
+  mutate(
+    total_goals = home_goals + away_goals,
+    total_behinds = home_behinds + away_behinds
+  ) %>%
+  select(match_id, is_wet, total_goals, total_behinds) %>%
+  pivot_longer(
+    cols = c(total_goals, total_behinds),
+    names_to = "score_type",
+    values_to = "count"
+  )
 
 goals_behinds <- ggplot(afl_long, aes(x = factor(is_wet), y = count, fill = score_type)) +
   geom_boxplot() +

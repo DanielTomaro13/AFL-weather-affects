@@ -203,7 +203,7 @@ afl_long <- afl_results_weather %>%
     values_to = "count"
   )
 
-goals_behinds <- ggplot(, aes(x = factor(is_wet), y = count, fill = score_type)) +
+goals_behinds <- ggplot(afl_long, aes(x = factor(is_wet), y = count, fill = score_type)) +
   geom_boxplot() +
   labs(
     title = "Goals vs Behinds by Weather Condition",
@@ -262,19 +262,140 @@ ratio
 # will skew the results
 
 afl_filtered <- afl_results_weather %>%
-  filter(round == 2) %>% 
+  filter(round > 10) %>% 
   filter(!is.na(home_ladder_position) & !is.na(away_ladder_position))
 
+odds <- fetch_betting_odds_footywire(2018, 2018)
+colnames(odds)
+
+odds <- odds %>% mutate(
+  date = as.Date(Date, format = '%d/%m/%y'),
+  season = Season,
+  round = Round,
+  home_team = Home.Team,
+  away_team = Away.Team,
+  home_odds = Home.Win.Odds,
+  away_odds = Away.Win.Odds
+) %>% select(
+  date, season, round, home_team, away_team, home_odds, away_odds
+)
+
+afl_weather_odds <- afl_results_weather %>%
+  left_join(odds, by = c("date", "season", "home_team", "away_team")) %>% mutate(
+    round = round.x
+  ) %>% select(
+    season, date, round, match_id, home_team, home_ladder_position, home_odds, home_goals, home_behinds,
+    home_score, away_team, away_ladder_position, away_odds, away_goals, away_behinds, away_score,
+    home_win, is_wet
+  )
+
+missing_odds <- sum(is.na(afl_weather_odds$home_odds))
+print(missing_odds)
 
 
+# For matches without odds data, we'll use ladder position 
+afl_complete <- afl_weather_odds %>%
+  mutate(
+    favorite = case_when(
+      !is.na(home_odds) & !is.na(away_odds) & home_odds < away_odds ~ "home",
+      !is.na(home_odds) & !is.na(away_odds) & away_odds < home_odds ~ "away",
+      !is.na(home_ladder_position) & !is.na(away_ladder_position) & 
+        home_ladder_position < away_ladder_position ~ "home",
+      !is.na(home_ladder_position) & !is.na(away_ladder_position) & 
+        away_ladder_position < home_ladder_position ~ "away",
+      TRUE ~ "even"
+    ),
+    # Flag whether we used odds or ladder for determining favorite
+    used_odds = !is.na(home_odds) & !is.na(away_odds),
+    strength_diff = case_when(
+      used_odds & favorite == "home" ~ away_odds / home_odds,
+      used_odds & favorite == "away" ~ home_odds / away_odds,
+      !used_odds & favorite == "home" ~ (away_ladder_position - home_ladder_position)/18,
+      !used_odds & favorite == "away" ~ (home_ladder_position - away_ladder_position)/18,
+      TRUE ~ 0
+    ),
+    upset = case_when(
+      favorite == "home" & home_win == 0 ~ 1,
+      favorite == "away" & home_win == 1 ~ 1,
+      TRUE ~ 0
+    )
+  )
 
+upset_summary <- afl_complete %>%
+  group_by(is_wet, used_odds) %>%
+  summarize(
+    total_games = n(),
+    total_upsets = sum(upset),
+    upset_percentage = round(100 * total_upsets / total_games, 1)
+  )
+print(upset_summary)
 
+chi_test <- chisq.test(table(afl_complete$is_wet, afl_complete$upset))
+print(chi_test)
 
+# Include a control variable for whether we used odds or ladder position
+logistic_model <- glm(
+  upset ~ is_wet + strength_diff + used_odds + is_wet:strength_diff, 
+  data = afl_complete,
+  family = "binomial"
+)
+print(summary(logistic_model))
 
+home_underdog_analysis <- afl_complete %>%
+  filter(favorite == "away") %>% 
+  group_by(is_wet) %>%
+  summarize(
+    total_games = n(),
+    home_wins = sum(home_win),
+    home_win_percentage = round(100 * home_wins / total_games, 1)
+  )
+print(home_underdog_analysis)
 
+ggplot(home_underdog_analysis, aes(x = factor(is_wet), y = home_win_percentage, fill = factor(is_wet))) +
+  geom_col() +
+  geom_text(aes(label = paste0(home_win_percentage, "%")), vjust = -0.5) +
+  labs(
+    title = "Home Underdog Win Percentage by Weather Condition",
+    x = "Weather Condition",
+    y = "Win Percentage",
+    fill = "Weather"
+  ) +
+  scale_x_discrete(labels = c("Dry", "Wet")) +
+  theme_minimal() +
+  theme(legend.position = "none")
 
-
-
+# The Chi-Square Test was used to determine whether there is a significant relationship between 
+# weather conditions and upsets.
+# The chi-square test is ideal for categorical data and helps assess whether two categorical variables 
+# are independent of each other.
+# In this case, we are checking if upsets happen more or less frequently in wet weather
+# The test compares the actual number of upsets in wet and dry conditions with the expected number 
+# under the assumption that weather does not impact upsets.
+# A significant result suggests that upsets are not randomly distributed across different weather conditions.
+# 
+# The p-value from the chi-square test was 0.0025, which is significant.
+# This indicates that the probability of observing such a difference means
+# weather likely has an influence on upsets.
+# 
+# Lets look at the GLM
+# Intercept -0.8905, p = 0.0003
+# The negative intercept suggests that, in the baseline scenario the probability of an upset occurring is relatively low.
+# 
+# Weather Condition is_wet: -1.2956, p = 0.0477
+# Upsets are significantly less likely in wet weather.
+# This aligns with the Chi-Square test results
+# 
+# Strength Difference strength_diff: -0.5977, p = 0.0145
+# Greater differences in team strength reduce the likelihood of an upset.
+# his is expected if a strong team faces a weak opponent, the stronger team is more likely to win, 
+# 
+# Betting Odds vs. Ladder Position used_odds: 1.7415, p = 0.0032 
+# Using betting odds instead of ladder position increases the likelihood of identifying upsets. 
+# 
+# Interaction Between Weather & Strength Difference is_wet:strength_diff: -0.2075, p = 0.6893
+# The interaction effect between weather and strength difference is not statistically significant.
+# In other words, while wet weather makes upsets less likely overall, 
+# its effect does not significantly depend on how evenly matched the teams are.
 ####################################################################################################################################
 # Does wet weather affect player statistics -can load in player accuracy
 
