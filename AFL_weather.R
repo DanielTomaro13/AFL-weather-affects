@@ -5,6 +5,7 @@ library(lubridate)
 library(stringr)
 library(ggplot2)
 library(knitr)
+library(readr)
 ####################################################################################################################################
 afl_weather <- fetch_results_afl(2018)
 colnames(afl_weather)
@@ -256,27 +257,148 @@ ratio
 # while the overall difficulty of the game increases. The relatively stable number of behinds suggests players are 
 # still getting shots on goal, but are less able to convert them into full 6-point scores in wet conditions.
 ####################################################################################################################################
-# Does wet weather affect who will win 
+# Does wet weather cause more upsets
 # We will exclude the first 10 rounds of the season so we are working with established ladder positions
 # If we include the early rounds then a team who is closer to Z in the alphabet but is actually a flag favourite
 # will skew the results
 
 afl_filtered <- afl_results_weather %>%
-  filter(round == 2) %>% 
+  filter(round > 10) %>% 
   filter(!is.na(home_ladder_position) & !is.na(away_ladder_position))
 
+odds <- fetch_betting_odds_footywire(2018, 2018)
+colnames(odds)
+
+odds <- odds %>% mutate(
+  date = as.Date(Date, format = '%d/%m/%y'),
+  season = Season,
+  round = Round,
+  home_team = Home.Team,
+  away_team = Away.Team,
+  home_odds = Home.Win.Odds,
+  away_odds = Away.Win.Odds
+) %>% select(
+  date, season, round, home_team, away_team, home_odds, away_odds
+)
+
+afl_weather_odds <- afl_results_weather %>%
+  left_join(odds, by = c("date", "season", "home_team", "away_team")) %>% mutate(
+    round = round.x
+  ) %>% select(
+    season, date, round, match_id, home_team, home_ladder_position, home_odds, home_goals, home_behinds,
+    home_score, away_team, away_ladder_position, away_odds, away_goals, away_behinds, away_score,
+    home_win, is_wet
+  )
+
+missing_odds <- sum(is.na(afl_weather_odds$home_odds))
+print(missing_odds)
 
 
+# For matches without odds data, we'll use ladder position 
+afl_complete <- afl_weather_odds %>%
+  mutate(
+    favorite = case_when(
+      !is.na(home_odds) & !is.na(away_odds) & home_odds < away_odds ~ "home",
+      !is.na(home_odds) & !is.na(away_odds) & away_odds < home_odds ~ "away",
+      !is.na(home_ladder_position) & !is.na(away_ladder_position) & 
+        home_ladder_position < away_ladder_position ~ "home",
+      !is.na(home_ladder_position) & !is.na(away_ladder_position) & 
+        away_ladder_position < home_ladder_position ~ "away",
+      TRUE ~ "even"
+    ),
+    # Flag whether we used odds or ladder for determining favorite
+    used_odds = !is.na(home_odds) & !is.na(away_odds),
+    strength_diff = case_when(
+      used_odds & favorite == "home" ~ away_odds / home_odds,
+      used_odds & favorite == "away" ~ home_odds / away_odds,
+      !used_odds & favorite == "home" ~ (away_ladder_position - home_ladder_position)/18,
+      !used_odds & favorite == "away" ~ (home_ladder_position - away_ladder_position)/18,
+      TRUE ~ 0
+    ),
+    upset = case_when(
+      favorite == "home" & home_win == 0 ~ 1,
+      favorite == "away" & home_win == 1 ~ 1,
+      TRUE ~ 0
+    )
+  )
 
+upset_summary <- afl_complete %>%
+  group_by(is_wet, used_odds) %>%
+  summarize(
+    total_games = n(),
+    total_upsets = sum(upset),
+    upset_percentage = round(100 * total_upsets / total_games, 1)
+  )
+print(upset_summary)
 
+chi_test <- chisq.test(table(afl_complete$is_wet, afl_complete$upset))
+print(chi_test)
 
+# Include a control variable for whether we used odds or ladder position
+logistic_model <- glm(
+  upset ~ is_wet + strength_diff + used_odds + is_wet:strength_diff, 
+  data = afl_complete,
+  family = "binomial"
+)
+print(summary(logistic_model))
 
+home_underdog_analysis <- afl_complete %>%
+  filter(favorite == "away") %>% 
+  group_by(is_wet) %>%
+  summarize(
+    total_games = n(),
+    home_wins = sum(home_win),
+    home_win_percentage = round(100 * home_wins / total_games, 1)
+  )
+print(home_underdog_analysis)
 
+ggplot(home_underdog_analysis, aes(x = factor(is_wet), y = home_win_percentage, fill = factor(is_wet))) +
+  geom_col() +
+  geom_text(aes(label = paste0(home_win_percentage, "%")), vjust = -0.5) +
+  labs(
+    title = "Home Underdog Win Percentage by Weather Condition",
+    x = "Weather Condition",
+    y = "Win Percentage",
+    fill = "Weather"
+  ) +
+  scale_x_discrete(labels = c("Dry", "Wet")) +
+  theme_minimal() +
+  theme(legend.position = "none")
 
-
-
+# The Chi-Square Test was used to determine whether there is a significant relationship between 
+# weather conditions and upsets.
+# The chi-square test is ideal for categorical data and helps assess whether two categorical variables 
+# are independent of each other.
+# In this case, we are checking if upsets happen more or less frequently in wet weather
+# The test compares the actual number of upsets in wet and dry conditions with the expected number 
+# under the assumption that weather does not impact upsets.
+# A significant result suggests that upsets are not randomly distributed across different weather conditions.
+# 
+# The p-value from the chi-square test was 0.0025, which is significant.
+# This indicates that the probability of observing such a difference means
+# weather likely has an influence on upsets.
+# 
+# Lets look at the GLM
+# Intercept -0.8905, p = 0.0003
+# The negative intercept suggests that, in the baseline scenario the probability of an upset occurring is relatively low.
+# 
+# Weather Condition is_wet: -1.2956, p = 0.0477
+# Upsets are significantly less likely in wet weather.
+# This aligns with the Chi-Square test results
+# 
+# Strength Difference strength_diff: -0.5977, p = 0.0145
+# Greater differences in team strength reduce the likelihood of an upset.
+# his is expected if a strong team faces a weak opponent, the stronger team is more likely to win, 
+# 
+# Betting Odds vs. Ladder Position used_odds: 1.7415, p = 0.0032 
+# Using betting odds instead of ladder position increases the likelihood of identifying upsets. 
+# 
+# Interaction Between Weather & Strength Difference is_wet:strength_diff: -0.2075, p = 0.6893
+# The interaction effect between weather and strength difference is not statistically significant.
+# In other words, while wet weather makes upsets less likely overall, 
+# its effect does not significantly depend on how evenly matched the teams are.
 ####################################################################################################################################
-# Does wet weather affect player statistics -can load in player accuracy
+# Are there teams more suited to wet weather footy
 
 afl_player_stats <- fetch_player_stats_footywire(2018)
 colnames(afl_player_stats)
@@ -333,6 +455,74 @@ afl_player_stats <- afl_player_stats %>%
     frees_for, frees_against, afl_fantasy_points, supercoach_points, centre_clearances, 
     stoppage_clearances, score_involvements, metres_gained, turnovers, interceptions, tackles_inside_50
   )
+
+afl_player_stats <- afl_player_stats %>%
+  mutate(round = parse_number(round)) %>% 
+  filter(!is.na(round)) 
+
+afl_team_stats <- afl_player_stats %>%
+  group_by(season, round, team) %>%
+  summarise(
+    total_goal_assists = sum(goal_assists, na.rm = TRUE),
+    total_contested_possessions = sum(contested_possessions, na.rm = TRUE),
+    total_uncontested_possessions = sum(uncontested_possessions, na.rm = TRUE),
+    total_effective_disposals = sum(effective_disposals, na.rm = TRUE),
+    avg_disposal_efficiency = mean(disposal_efficiency, na.rm = TRUE),
+    total_contested_marks = sum(contested_marks, na.rm = TRUE),
+    total_marks_inside_50 = sum(marks_inside_50, na.rm = TRUE),
+    total_one_percenters = sum(one_percenters, na.rm = TRUE),
+    total_bounces = sum(bounces, na.rm = TRUE),
+    avg_time_on_ground = mean(time_on_ground, na.rm = TRUE),
+    total_kicks = sum(kicks, na.rm = TRUE),
+    total_handballs = sum(handballs, na.rm = TRUE),
+    total_disposals = sum(disposals, na.rm = TRUE),
+    total_marks = sum(marks, na.rm = TRUE),
+    total_goals = sum(goals, na.rm = TRUE),
+    total_behinds = sum(behinds, na.rm = TRUE),
+    total_tackles = sum(tackles, na.rm = TRUE),
+    total_hit_outs = sum(hit_outs, na.rm = TRUE),
+    total_inside_50s = sum(inside_50s, na.rm = TRUE),
+    total_clearances = sum(clearances, na.rm = TRUE),
+    total_clangers = sum(clangers, na.rm = TRUE),
+    total_rebound_50s = sum(rebound_50s, na.rm = TRUE),
+    total_frees_for = sum(frees_for, na.rm = TRUE),
+    total_frees_against = sum(frees_against, na.rm = TRUE),
+    total_afl_fantasy_points = sum(afl_fantasy_points, na.rm = TRUE),
+    total_supercoach_points = sum(supercoach_points, na.rm = TRUE),
+    total_centre_clearances = sum(centre_clearances, na.rm = TRUE),
+    total_stoppage_clearances = sum(stoppage_clearances, na.rm = TRUE),
+    total_score_involvements = sum(score_involvements, na.rm = TRUE),
+    total_metres_gained = sum(metres_gained, na.rm = TRUE),
+    total_turnovers = sum(turnovers, na.rm = TRUE),
+    total_interceptions = sum(interceptions, na.rm = TRUE),
+    total_tackles_inside_50 = sum(tackles_inside_50, na.rm = TRUE)
+  ) %>%
+  arrange(season, round, team)
+sum(is.na(afl_team_stats))
+
+afl_complete <- afl_complete %>%
+  left_join(
+    afl_team_stats, 
+    by = c("season", "round", "home_team" = "team")
+  ) %>%
+  rename_with(~ paste0("home_", .), -c(season, round, home_team, away_team)) %>%
+  left_join(
+    afl_team_stats, 
+    by = c("season", "round", "away_team" = "team")
+  ) %>%
+  rename_with(~ paste0("away_", .), -c(season, round, home_team, away_team))
+
+columns_to_remove <- grep("^away_home_away_", colnames(afl_complete), value = TRUE)
+afl_complete <- afl_complete %>%
+  select(-all_of(columns_to_remove))
+afl_complete <- afl_complete %>%
+  rename_with(~ gsub("^away_home_", "", .)) # Remove unnecessary "away_home_" prefixes
+colnames(afl_complete)
+
+
+####################################################################################################################################
+# Does wet weather affect player statistics - does it affect accuracy, are some players suited to wet weather
+
 
 ####################################################################################################################################
 

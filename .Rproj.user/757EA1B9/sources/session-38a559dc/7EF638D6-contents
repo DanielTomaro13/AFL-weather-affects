@@ -5,6 +5,7 @@ library(lubridate)
 library(stringr)
 library(ggplot2)
 library(knitr)
+library(readr)
 ####################################################################################################################################
 afl_weather <- fetch_results_afl(2018)
 colnames(afl_weather)
@@ -256,7 +257,7 @@ ratio
 # while the overall difficulty of the game increases. The relatively stable number of behinds suggests players are 
 # still getting shots on goal, but are less able to convert them into full 6-point scores in wet conditions.
 ####################################################################################################################################
-# Does wet weather affect who will win 
+# Does wet weather cause more upsets
 # We will exclude the first 10 rounds of the season so we are working with established ladder positions
 # If we include the early rounds then a team who is closer to Z in the alphabet but is actually a flag favourite
 # will skew the results
@@ -397,7 +398,7 @@ ggplot(home_underdog_analysis, aes(x = factor(is_wet), y = home_win_percentage, 
 # In other words, while wet weather makes upsets less likely overall, 
 # its effect does not significantly depend on how evenly matched the teams are.
 ####################################################################################################################################
-# Does wet weather affect player statistics -can load in player accuracy
+# Are there teams more suited to wet weather footy
 
 afl_player_stats <- fetch_player_stats_footywire(2018)
 colnames(afl_player_stats)
@@ -454,6 +455,74 @@ afl_player_stats <- afl_player_stats %>%
     frees_for, frees_against, afl_fantasy_points, supercoach_points, centre_clearances, 
     stoppage_clearances, score_involvements, metres_gained, turnovers, interceptions, tackles_inside_50
   )
+
+afl_player_stats <- afl_player_stats %>%
+  mutate(round = parse_number(round)) %>% 
+  filter(!is.na(round)) 
+
+afl_team_stats <- afl_player_stats %>%
+  group_by(season, round, team) %>%
+  summarise(
+    total_goal_assists = sum(goal_assists, na.rm = TRUE),
+    total_contested_possessions = sum(contested_possessions, na.rm = TRUE),
+    total_uncontested_possessions = sum(uncontested_possessions, na.rm = TRUE),
+    total_effective_disposals = sum(effective_disposals, na.rm = TRUE),
+    avg_disposal_efficiency = mean(disposal_efficiency, na.rm = TRUE),
+    total_contested_marks = sum(contested_marks, na.rm = TRUE),
+    total_marks_inside_50 = sum(marks_inside_50, na.rm = TRUE),
+    total_one_percenters = sum(one_percenters, na.rm = TRUE),
+    total_bounces = sum(bounces, na.rm = TRUE),
+    avg_time_on_ground = mean(time_on_ground, na.rm = TRUE),
+    total_kicks = sum(kicks, na.rm = TRUE),
+    total_handballs = sum(handballs, na.rm = TRUE),
+    total_disposals = sum(disposals, na.rm = TRUE),
+    total_marks = sum(marks, na.rm = TRUE),
+    total_goals = sum(goals, na.rm = TRUE),
+    total_behinds = sum(behinds, na.rm = TRUE),
+    total_tackles = sum(tackles, na.rm = TRUE),
+    total_hit_outs = sum(hit_outs, na.rm = TRUE),
+    total_inside_50s = sum(inside_50s, na.rm = TRUE),
+    total_clearances = sum(clearances, na.rm = TRUE),
+    total_clangers = sum(clangers, na.rm = TRUE),
+    total_rebound_50s = sum(rebound_50s, na.rm = TRUE),
+    total_frees_for = sum(frees_for, na.rm = TRUE),
+    total_frees_against = sum(frees_against, na.rm = TRUE),
+    total_afl_fantasy_points = sum(afl_fantasy_points, na.rm = TRUE),
+    total_supercoach_points = sum(supercoach_points, na.rm = TRUE),
+    total_centre_clearances = sum(centre_clearances, na.rm = TRUE),
+    total_stoppage_clearances = sum(stoppage_clearances, na.rm = TRUE),
+    total_score_involvements = sum(score_involvements, na.rm = TRUE),
+    total_metres_gained = sum(metres_gained, na.rm = TRUE),
+    total_turnovers = sum(turnovers, na.rm = TRUE),
+    total_interceptions = sum(interceptions, na.rm = TRUE),
+    total_tackles_inside_50 = sum(tackles_inside_50, na.rm = TRUE)
+  ) %>%
+  arrange(season, round, team)
+sum(is.na(afl_team_stats))
+
+afl_complete <- afl_complete %>%
+  left_join(
+    afl_team_stats, 
+    by = c("season", "round", "home_team" = "team")
+  ) %>%
+  rename_with(~ paste0("home_", .), -c(season, round, home_team, away_team)) %>%
+  left_join(
+    afl_team_stats, 
+    by = c("season", "round", "away_team" = "team")
+  ) %>%
+  rename_with(~ paste0("away_", .), -c(season, round, home_team, away_team))
+
+columns_to_remove <- grep("^away_home_away_", colnames(afl_complete), value = TRUE)
+afl_complete <- afl_complete %>%
+  select(-all_of(columns_to_remove))
+afl_complete <- afl_complete %>%
+  rename_with(~ gsub("^away_home_", "", .)) # Remove unnecessary "away_home_" prefixes
+colnames(afl_complete)
+
+
+####################################################################################################################################
+# Does wet weather affect player statistics - does it affect accuracy, are some players suited to wet weather
+
 
 ####################################################################################################################################
 
