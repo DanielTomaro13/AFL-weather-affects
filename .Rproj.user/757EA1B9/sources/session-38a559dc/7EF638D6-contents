@@ -3,6 +3,8 @@ library(tidyr)
 library(dplyr)
 library(lubridate)
 library(stringr)
+library(ggplot2)
+library(knitr)
 ####################################################################################################################################
 afl_weather <- fetch_results_afl(2018)
 colnames(afl_weather)
@@ -132,17 +134,117 @@ afl_results_weather <- afl_results_weather %>%
     away_team, away_ladder_position, away_goals, away_behinds, away_score, home_win, is_wet
   )
 ####################################################################################################################################
-# Does wet weather affect total score
+# Does wet weather affect total score - does it affect goals v behinds
+
+# Summary when is_wet = 1 or 0
+
+score_summary <- afl_results_weather %>%
+  group_by(is_wet) %>%
+  summarize(
+    avg_total_score = mean(home_score + away_score),
+    sd_total_score = sd(home_score + away_score),
+    median_total_score = median(home_score + away_score),
+    n_games = n()
+  )
+
+t_test_total <- t.test(
+  (home_score + away_score) ~ is_wet, 
+  data = afl_results_weather
+)
+print(t_test_total)
+
+# Summary for goals and behinds
+
+goals_behinds_summary <- afl_results_weather %>%
+  group_by(is_wet) %>%
+  summarize(
+    total_goals = sum(home_goals + away_goals),
+    total_behinds = sum(home_behinds + away_behinds),
+    goals_per_game = mean(home_goals + away_goals),
+    behinds_per_game = mean(home_behinds + away_behinds),
+    goals_to_behinds_ratio = total_goals / total_behinds,
+    n_games = n()
+  )
+
+t_test_goals <- t.test(
+  (home_goals + away_goals) ~ is_wet, 
+  data = afl_results_weather
+)
+print(t_test_goals)
+
+t_test_behinds <- t.test(
+  (home_behinds + away_behinds) ~ is_wet, 
+  data = afl_results_weather
+)
+print(t_test_behinds)
+
+# Plots
+
+match_score <- ggplot(afl_results_weather, aes(x = factor(is_wet), y = home_score + away_score)) +
+  geom_boxplot(fill = c("#F8766D", "#00BFC4")) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  labs(
+    title = "Total Match Score by Weather Condition",
+    x = "Weather Condition",
+    y = "Total Score"
+  ) +
+  scale_x_discrete(labels = c("Dry", "Wet")) +
+  theme_minimal()
+match_score
 
 
+goals_behinds <- ggplot(afl_long, aes(x = factor(is_wet), y = count, fill = score_type)) +
+  geom_boxplot() +
+  labs(
+    title = "Goals vs Behinds by Weather Condition",
+    x = "Weather Condition",
+    y = "Count",
+    fill = "Score Type"
+  ) +
+  scale_x_discrete(labels = c("Dry", "Wet")) +
+  scale_fill_discrete(labels = c("Behinds", "Goals")) +
+  theme_minimal()
+goals_behinds
 
+afl_ratio <- afl_results_weather %>%
+  group_by(match_id, is_wet) %>%
+  summarize(
+    goals = sum(home_goals + away_goals),
+    behinds = sum(home_behinds + away_behinds),
+    ratio = goals / behinds
+  )
 
+ratio <- ggplot(afl_ratio, aes(x = factor(is_wet), y = ratio)) +
+  geom_boxplot(fill = c("#F8766D", "#00BFC4")) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  labs(
+    title = "Goals to Behinds Ratio by Weather Condition",
+    x = "Weather Condition",
+    y = "Goals/Behinds Ratio"
+  ) +
+  scale_x_discrete(labels = c("Dry", "Wet")) +
+  theme_minimal()
+ratio
 
-
-
-
-
-
+# So from this we can conclusively say, wet weather significantly reduces total match scores with a p-value of 0.01.
+# In dry conditions, the average total score is 169.36 points
+# In wet conditions, the average total score is 158.68 points
+# This represents approximately a 10.68-point decrease in wet weather
+# The 95% confidence interval (2.52 to 18.84) confirms this decrease is statistically meaningful.
+# 
+# Goals are significantly reduced in wet weather:
+# In dry conditions, teams score an average of 24.52 goals per match
+# In wet conditions, this drops to 22.79 goals per match
+# This represents approximately a 1.73-goal decrease
+# 
+# Behinds are NOT significantly affected:
+# Dry conditions: 22.21 behinds per match
+# Wet conditions: 21.94 behinds per match
+# The difference of 0.27 behinds is not statistically significant therefore wet weather should not affect
+# player goal kicking accuracy later on unless there is more kicks on the full or not making the distance
+# This makes intuitive sense - wet conditions likely make it harder to execute clean ball handling needed for goals,
+# while the overall difficulty of the game increases. The relatively stable number of behinds suggests players are 
+# still getting shots on goal, but are less able to convert them into full 6-point scores in wet conditions.
 ####################################################################################################################################
 # Does wet weather affect who will win 
 
@@ -157,7 +259,7 @@ afl_results_weather <- afl_results_weather %>%
 
 
 ####################################################################################################################################
-# Does wet weather affect player statistics
+# Does wet weather affect player statistics -can load in player accuracy
 
 afl_player_stats <- fetch_player_stats_footywire(2018)
 colnames(afl_player_stats)
