@@ -3,24 +3,24 @@
     "path": "~/Documents/Projects/AFL-fitzRoy/AFL_weather/AFL_weather.R",
     "project_path": "AFL_weather.R",
     "type": "r_source",
-    "hash": "1276091127",
+    "hash": "0",
     "contents": "",
-    "dirty": false,
+    "dirty": true,
     "created": 1742465285917.0,
     "source_on_save": false,
     "relative_order": 1,
     "properties": {
         "source_window_id": "",
         "Source": "Source",
-        "cursorPosition": "523,109",
-        "scrollLine": "500"
+        "cursorPosition": "752,0",
+        "scrollLine": "724"
     },
     "folds": "",
-    "lastKnownWriteTime": 1742503788,
+    "lastKnownWriteTime": 1742514402,
     "encoding": "UTF-8",
     "collab_server": "",
     "source_window": "",
-    "last_content_update": 1742503788321,
+    "last_content_update": 1742518253914,
     "read_only": false,
     "read_only_alternatives": []
 }

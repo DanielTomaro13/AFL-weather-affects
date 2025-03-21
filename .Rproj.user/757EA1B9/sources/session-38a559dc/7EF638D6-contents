@@ -6,6 +6,54 @@ library(stringr)
 library(ggplot2)
 library(knitr)
 library(readr)
+library(purrr)
+####################################################################################################################################
+team_name_mapping <- tibble(
+  original_name = c("Adelaide Crows", "Adelaide",
+                    "Brisbane Lions", "Brisbane",
+                    "Carlton Blues", "Carlton",
+                    "Collingwood Magpies", "Collingwood",
+                    "Essendon Bombers", "Essendon",
+                    "Fremantle Dockers", "Fremantle",
+                    "Geelong Cats", "Geelong",
+                    "Gold Coast Suns","Gold Coast", "Gold Coast SUNS",
+                    "GWS GIANTS", "Greater Western Sydney", "GWS",
+                    "Hawthorn Hawks", "Hawthorn",
+                    "Melbourne Demons", "Melbourne",
+                    "North Melbourne Kangaroos", "North Melbourne",
+                    "Port Adelaide Power", "Port Adelaide",
+                    "Richmond Tigers", "Richmond",
+                    "St Kilda Saints", "St Kilda",
+                    "Sydney Swans", "Sydney",
+                    "West Coast Eagles", "West Coast",
+                    "Western Bulldogs", "Bulldogs", "Footscray"),
+  standard_name = c("Adelaide", "Adelaide",
+                    "Brisbane", "Brisbane",
+                    "Carlton", "Carlton",
+                    "Collingwood", "Collingwood",
+                    "Essendon", "Essendon",
+                    "Fremantle", "Fremantle",
+                    "Geelong", "Geelong",
+                    "Gold Coast", "Gold Coast", "Gold Coast",
+                    "GWS", "GWS", "GWS",
+                    "Hawthorn", "Hawthorn",
+                    "Melbourne", "Melbourne",
+                    "North Melbourne", "North Melbourne",
+                    "Port Adelaide", "Port Adelaide",
+                    "Richmond", "Richmond",
+                    "St Kilda", "St Kilda",
+                    "Sydney", "Sydney",
+                    "West Coast", "West Coast",
+                    "Western Bulldogs", "Western Bulldogs", "Western Bulldogs")
+)
+
+standardize_team_names <- function(team_col) {
+  team_col <- str_trim(team_col)
+  team_col <- team_name_mapping$standard_name[match(team_col, team_name_mapping$original_name)]
+  return(team_col)
+}
+
+
 ####################################################################################################################################
 afl_weather <- fetch_results_afl(2018)
 colnames(afl_weather)
@@ -36,6 +84,9 @@ afl_weather <- afl_weather %>%
     )
   ) %>% select(
     season, date, match_id, round, home_team, away_team, is_wet
+  ) %>% mutate(
+    home_team = standardize_team_names(home_team),
+    away_team = standardize_team_names(away_team)
   )
 
 afl_results <- fetch_results_afl(2018)
@@ -71,10 +122,11 @@ afl_results <- afl_results %>%
   select(
     season, date, match_id, round, home_team, home_goals, home_behinds,
     home_score, away_team, away_goals, away_behinds, away_score, home_win 
+  ) %>% mutate(
+    home_team = standardize_team_names(home_team),
+    away_team = standardize_team_names(away_team)
   )
 
-str(afl_results)
-str(afl_weather )
 afl_results <- afl_results %>% mutate(match_id = as.character(match_id))
 afl_weather <- afl_weather %>% mutate(match_id = as.character(match_id))
 
@@ -117,14 +169,16 @@ afl_ladder <- fetch_ladder_afl(2018, round = 1:23)
 colnames(afl_ladder)
 afl_ladder <- afl_ladder %>% mutate(
   round = round_number,
-  team = team.name
+  team = team.club.name
 ) %>% select(
   season, round, team, position
-)
+) %>% 
+  mutate(team = standardize_team_names(team))
 
 afl_results_weather <- afl_results_weather %>%
   left_join(afl_ladder, by = c("season", "round", "home_team" = "team")) %>%
   rename(home_ladder_position = position)  
+afl_results_weather <- afl_results_weather %>% filter(round <= 23)
 
 afl_results_weather <- afl_results_weather %>%
   left_join(afl_ladder, by = c("season", "round", "away_team" = "team")) %>%
@@ -279,6 +333,11 @@ odds <- odds %>% mutate(
   away_odds = Away.Win.Odds
 ) %>% select(
   date, season, round, home_team, away_team, home_odds, away_odds
+)
+
+odds <- odds %>% mutate(
+  home_team = standardize_team_names(home_team),
+  away_team = standardize_team_names(away_team)
 )
 
 afl_weather_odds <- afl_results_weather %>%
@@ -500,28 +559,196 @@ afl_team_stats <- afl_player_stats %>%
   arrange(season, round, team)
 sum(is.na(afl_team_stats))
 
-afl_complete <- afl_complete %>%
-  left_join(
-    afl_team_stats, 
-    by = c("season", "round", "home_team" = "team")
+afl_results_weather <- afl_results_weather %>%
+  left_join(afl_team_stats, by = c("season", "round", "home_team" = "team")) %>%
+  rename_with(~ paste0("home_", .), -c(season, round, match_id, home_team, 
+                                       away_team, home_score, away_score, home_win, is_wet))
+
+afl_results_weather <- afl_results_weather %>%
+  left_join(afl_team_stats, by = c("season", "round", "away_team" = "team")) %>%
+  rename_with(~ paste0("away_", .), -c(season, round, match_id, home_team, 
+                                       away_team, home_score, away_score, home_win, is_wet))
+
+colnames(afl_results_weather) <- colnames(afl_results_weather) %>%
+  str_replace("^away_home_home_", "home_") %>% 
+  str_replace("^away_home_away_", "away_") %>%
+  str_replace("^away_home_", "home_") %>%
+  str_replace("^away_", "away_") %>%
+  str_replace("^away_home_date$", "date") 
+colnames(afl_results_weather)
+afl_results_weather <- afl_results_weather %>% filter(
+  round <= 23
+)
+colSums(is.na(afl_results_weather))
+
+team_weather_stats <- bind_rows(
+  # Home team stats
+  afl_results_weather %>%
+    select(team = home_team, round, is_wet, score = home_score, 
+           starts_with("home_total_"), starts_with("home_avg_")) %>%
+    rename_with(~ str_replace(., "^home_", ""), -c(team, is_wet, score)),
+  
+  # Away team stats
+  afl_results_weather %>%
+    select(team = away_team, round, is_wet, score = away_score, 
+           starts_with("away_total_"), starts_with("away_avg_")) %>%
+    rename_with(~ str_replace(., "^away_", ""), -c(team, is_wet, score))
+)
+
+team_weather_summary <- team_weather_stats %>%
+  group_by(team, is_wet) %>%
+  summarize(
+    games_played = n(),
+    avg_score = mean(score, na.rm = TRUE),
+    avg_contested_possessions = mean(total_contested_possessions, na.rm = TRUE),
+    avg_uncontested_possessions = mean(total_uncontested_possessions, na.rm = TRUE),
+    avg_tackles = mean(total_tackles, na.rm = TRUE),
+    avg_clearances = mean(total_clearances, na.rm = TRUE),
+    avg_disposal_efficiency = mean(avg_disposal_efficiency, na.rm = TRUE),
+    avg_contested_marks = mean(total_contested_marks, na.rm = TRUE),
+    avg_goals = mean(total_goals, na.rm = TRUE),
+    avg_behinds = mean(total_behinds, na.rm = TRUE),
+    avg_inside_50s = mean(total_inside_50s, na.rm = TRUE),
+    avg_hit_outs = mean(total_hit_outs, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+team_weather_diff <- team_weather_summary %>%
+  pivot_wider(
+    id_cols = team,
+    names_from = is_wet,
+    values_from = c(games_played, avg_score, avg_contested_possessions, 
+                    avg_uncontested_possessions, avg_tackles, avg_clearances,
+                    avg_disposal_efficiency, avg_contested_marks, avg_goals,
+                    avg_behinds, avg_inside_50s, avg_hit_outs),
+    names_sep = "_"
   ) %>%
-  rename_with(~ paste0("home_", .), -c(season, round, home_team, away_team)) %>%
-  left_join(
-    afl_team_stats, 
-    by = c("season", "round", "away_team" = "team")
+  mutate(
+    score_diff = avg_score_1 - avg_score_0,
+    contested_possession_diff = avg_contested_possessions_1 - avg_contested_possessions_0,
+    uncontested_possession_diff = avg_uncontested_possessions_1 - avg_uncontested_possessions_0,
+    tackle_diff = avg_tackles_1 - avg_tackles_0,
+    clearance_diff = avg_clearances_1 - avg_clearances_0,
+    disposal_efficiency_diff = avg_disposal_efficiency_1 - avg_disposal_efficiency_0,
+    contested_mark_diff = avg_contested_marks_1 - avg_contested_marks_0,
+    goal_diff = avg_goals_1 - avg_goals_0,
+    behind_diff = avg_behinds_1 - avg_behinds_0,
+    inside_50_diff = avg_inside_50s_1 - avg_inside_50s_0,
+    hit_out_diff = avg_hit_outs_1 - avg_hit_outs_0,
+    
+    score_pct_change = (avg_score_1 / avg_score_0 - 1) * 100,
+    contested_possession_pct_change = (avg_contested_possessions_1 / avg_contested_possessions_0 - 1) * 100,
+    tackle_pct_change = (avg_tackles_1 / avg_tackles_0 - 1) * 100,
+    clearance_pct_change = (avg_clearances_1 / avg_clearances_0 - 1) * 100,
+    disposal_efficiency_pct_change = (avg_disposal_efficiency_1 / avg_disposal_efficiency_0 - 1) * 100,
+    contested_mark_pct_change = (avg_contested_marks_1 / avg_contested_marks_0 - 1) * 100
+  )
+
+wet_weather_specialists <- team_weather_diff %>%
+  arrange(desc(score_pct_change)) %>%
+  select(team, games_played_0, games_played_1, avg_score_0, avg_score_1, 
+         score_diff, score_pct_change, contested_possession_pct_change, tackle_pct_change, clearance_pct_change,
+         disposal_efficiency_pct_change, contested_mark_pct_change)
+
+ggplot(team_weather_diff, aes(x = reorder(team, score_pct_change), y = score_pct_change)) +
+  geom_col(aes(fill = score_pct_change > 0)) +
+  coord_flip() +
+  labs(
+    title = "Teams' Scoring Performance in Wet vs. Dry Conditions",
+    subtitle = "Positive values indicate better performance in wet conditions",
+    x = "Team",
+    y = "Score % Change (Wet vs Dry)"
+  ) +
+  theme_minimal()
+
+key_stats_long <- team_weather_diff %>%
+  select(team, ends_with("_diff")) %>%
+  pivot_longer(
+    cols = -team,
+    names_to = "statistic",
+    values_to = "difference"
   ) %>%
-  rename_with(~ paste0("away_", .), -c(season, round, home_team, away_team))
+  mutate(statistic = str_replace(statistic, "_diff", ""))
 
-columns_to_remove <- grep("^away_home_away_", colnames(afl_complete), value = TRUE)
-afl_complete <- afl_complete %>%
-  select(-all_of(columns_to_remove))
-afl_complete <- afl_complete %>%
-  rename_with(~ gsub("^away_home_", "", .)) # Remove unnecessary "away_home_" prefixes
-colnames(afl_complete)
+ggplot(key_stats_long, aes(x = statistic, y = reorder(team, difference), fill = difference)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0) +
+  labs(
+    title = "Team Performance Differences in Wet vs. Dry Conditions",
+    x = "Statistic",
+    y = "Team",
+    fill = "Difference\n(Wet - Dry)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+test_weather_effect <- function(team_name) {
+  team_data <- team_weather_stats %>% filter(team == team_name)
+  
+  score_test <- t.test(score ~ is_wet, data = team_data)
+  
+  contested_test <- t.test(total_contested_possessions ~ is_wet, data = team_data)
+  
+  return(data.frame(
+    team = team_name,
+    score_p_value = score_test$p.value,
+    contested_p_value = contested_test$p.value
+  ))
+}
+
+team_significance <- map_df(unique(team_weather_stats$team), test_weather_effect)
+team_significance
+
+team_weather_summary <- team_weather_summary %>%
+  mutate(
+    contested_ratio = avg_contested_possessions / 
+      (avg_contested_possessions + avg_uncontested_possessions)
+  )
+
+team_style_diff <- team_weather_summary %>%
+  select(team, is_wet, contested_ratio) %>%
+  pivot_wider(
+    id_cols = team,
+    names_from = is_wet,
+    values_from = contested_ratio,
+    names_prefix = "contested_ratio_"
+  ) %>%
+  mutate(
+    style_change = contested_ratio_1 - contested_ratio_0,
+    adapts_to_wet = abs(style_change) > mean(abs(style_change), na.rm = TRUE)
+  )
+team_style_diff
 
 
+  
+
+  
+# Brisbane has the lowest score p-value (0.038) suggesting weather significantly impacts their scoring.
+# Adelaide and Carlton have the lowest p-values for contested possessions (0.088 and 0.164, respectively)  
+# indicating a possible weather effect on how they play the contest.
+# Most other teams have high p-values (> 0.2), suggesting no significant change in performance 
+# metrics due to weather for those clubs.
+# So, Brisbane is the only team with statistical evidence of score sensitivity to weather, 
+# and Adelaide and Carlton may adjust their contested game slightly. Brisbane also play the equal most
+# so its very interesting that they are unable to adapt their style to keep scoring high.
+# Teams like GWS, Adelaide, Carlton, Hawthorn, Port Adelaide, Geelong, West Coast 
+# show a greater than average shift in contested ratio meaning they change their style significantly 
+# between wet and dry games.
+# This do not necessarily mean they improve or worsen just that they adapt.
+# 
+# Some teams adapt their play but it doesn’t necessarily translate to statistically significant changes in outcomes.
+# Brisbane is unique they don’t adjust style much but are statistically impacted by weather.
+# Carlton and Adelaide show both some adaptation and mild statistical effects these may be 
+# teams where tactical changes are reactive but still somewhat effective.
 ####################################################################################################################################
 # Does wet weather affect player statistics - does it affect accuracy, are some players suited to wet weather
+
+
+
+
+
+
+
 
 
 ####################################################################################################################################

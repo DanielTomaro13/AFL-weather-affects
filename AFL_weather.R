@@ -500,24 +500,10 @@ afl_team_stats <- afl_player_stats %>%
   arrange(season, round, team)
 sum(is.na(afl_team_stats))
 
-afl_complete <- afl_complete %>%
-  left_join(
-    afl_team_stats, 
-    by = c("season", "round", "home_team" = "team")
-  ) %>%
-  rename_with(~ paste0("home_", .), -c(season, round, home_team, away_team)) %>%
-  left_join(
-    afl_team_stats, 
-    by = c("season", "round", "away_team" = "team")
-  ) %>%
-  rename_with(~ paste0("away_", .), -c(season, round, home_team, away_team))
 
-columns_to_remove <- grep("^away_home_away_", colnames(afl_complete), value = TRUE)
-afl_complete <- afl_complete %>%
-  select(-all_of(columns_to_remove))
-afl_complete <- afl_complete %>%
-  rename_with(~ gsub("^away_home_", "", .)) # Remove unnecessary "away_home_" prefixes
-colnames(afl_complete)
+
+
+
 
 
 ####################################################################################################################################
